@@ -34,7 +34,7 @@ std::string NeuralRequest(std::string MyNeuralRequest)
 {
     // Find a Neural Network Node that is free
     LOCK(cs_vNodes);
-    BOOST_FOREACH(CNode* pNode, vNodes) 
+    for (auto const& pNode : vNodes)
     {
         if (Contains(pNode->strSubVer,"1999"))
         {
@@ -52,7 +52,7 @@ void GatherNeuralHashes()
 {
     // Find a Neural Network Node that is free
     LOCK(cs_vNodes);
-    BOOST_FOREACH(CNode* pNode, vNodes) 
+    for (auto const& pNode : vNodes)
     {
         if (Contains(pNode->strSubVer,"1999"))
         {
@@ -72,7 +72,7 @@ bool RequestSupermajorityNeuralData()
     std::string sCurrentNeuralSupermajorityHash = GetCurrentNeuralNetworkSupermajorityHash(dCurrentPopularity);
     std::string reqid = DefaultWalletAddress();
             
-    BOOST_FOREACH(CNode* pNode, vNodes) 
+    for (auto const& pNode : vNodes)
     {
         if (!pNode->NeuralHash.empty() && !sCurrentNeuralSupermajorityHash.empty() && pNode->NeuralHash == sCurrentNeuralSupermajorityHash)
         {
@@ -142,14 +142,14 @@ Value getaddednodeinfo(const Array& params, bool fHelp)
     if (params.size() == 1)
     {
         LOCK(cs_vAddedNodes);
-        BOOST_FOREACH(string& strAddNode, vAddedNodes)
+        for (auto const& strAddNode : vAddedNodes)
             laddedNodes.push_back(strAddNode);
     }
     else
     {
         string strNode = params[1].get_str();
         LOCK(cs_vAddedNodes);
-        BOOST_FOREACH(string& strAddNode, vAddedNodes)
+        for (auto const& strAddNode : vAddedNodes)
             if (strAddNode == strNode)
             {
                 laddedNodes.push_back(strAddNode);
@@ -162,7 +162,7 @@ Value getaddednodeinfo(const Array& params, bool fHelp)
     if (!fDns)
     {
         Object ret;
-        BOOST_FOREACH(string& strAddNode, laddedNodes)
+        for (auto const& strAddNode : laddedNodes)
             ret.push_back(Pair("addednode", strAddNode));
         return ret;
     }
@@ -170,7 +170,7 @@ Value getaddednodeinfo(const Array& params, bool fHelp)
     Array ret;
 
     list<pair<string, vector<CService> > > laddedAddreses(0);
-    BOOST_FOREACH(string& strAddNode, laddedNodes)
+    for (auto const& strAddNode : laddedNodes)
     {
         vector<CService> vservNode(0);
         if(Lookup(strAddNode.c_str(), vservNode, GetDefaultPort(), fNameLookup, 0))
@@ -193,12 +193,12 @@ Value getaddednodeinfo(const Array& params, bool fHelp)
 
         Array addresses;
         bool fConnected = false;
-        BOOST_FOREACH(CService& addrNode, it->second)
+        for (auto const& addrNode : it->second)
         {
             bool fFound = false;
             Object node;
             node.push_back(Pair("address", addrNode.ToString()));
-            BOOST_FOREACH(CNode* pnode, vNodes)
+            for (auto const& pnode : vNodes)
                 if (pnode->addr == addrNode)
                 {
                     fFound = true;
@@ -225,7 +225,7 @@ bool AsyncNeuralRequest(std::string command_name,std::string cpid,int NodeLimit)
     LOCK(cs_vNodes);
     int iContactCount = 0;
     msNeuralResponse="";
-    BOOST_FOREACH(CNode* pNode, vNodes) 
+    for (auto const& pNode : vNodes)
     {
         if (Contains(pNode->strSubVer,"1999"))
         {
@@ -257,7 +257,7 @@ Value ping(const Array& params, bool fHelp)
 
     // Request that each node send a ping during next message processing pass
     LOCK(cs_vNodes);
-    BOOST_FOREACH(CNode* pNode, vNodes) {
+    for (auto const& pNode : vNodes) {
         pNode->fPingQueued = true;
     }
 
@@ -270,7 +270,7 @@ static void CopyNodeStats(std::vector<CNodeStats>& vstats)
 
     LOCK(cs_vNodes);
     vstats.reserve(vNodes.size());
-    BOOST_FOREACH(CNode* pnode, vNodes) {
+    for (auto const& pnode : vNodes) {
         CNodeStats stats;
         pnode->copyStats(stats);
         vstats.push_back(stats);
@@ -290,7 +290,7 @@ Value getpeerinfo(const Array& params, bool fHelp)
     Array ret;
     GatherNeuralHashes();
     
-    BOOST_FOREACH(const CNodeStats& stats, vstats) {
+    for (auto const& stats : vstats) {
         Object obj;
 
         obj.push_back(Pair("addr", stats.addrName));
@@ -299,9 +299,9 @@ Value getpeerinfo(const Array& params, bool fHelp)
             obj.push_back(Pair("addrlocal", stats.addrLocal));
 
         obj.push_back(Pair("services", strprintf("%08" PRIx64, stats.nServices)));
-        obj.push_back(Pair("lastsend", (int64_t)stats.nLastSend));
-        obj.push_back(Pair("lastrecv", (int64_t)stats.nLastRecv));
-        obj.push_back(Pair("conntime", (int64_t)stats.nTimeConnected));
+        obj.push_back(Pair("lastsend", stats.nLastSend));
+        obj.push_back(Pair("lastrecv", stats.nLastRecv));
+        obj.push_back(Pair("conntime", stats.nTimeConnected));
         obj.push_back(Pair("pingtime", stats.dPingTime));
         if (stats.dPingWait > 0.0)
             obj.push_back(Pair("pingwait", stats.dPingWait));
@@ -309,13 +309,17 @@ Value getpeerinfo(const Array& params, bool fHelp)
         obj.push_back(Pair("subver", stats.strSubVer));
         obj.push_back(Pair("inbound", stats.fInbound));
         obj.push_back(Pair("startingheight", stats.nStartingHeight));
-        obj.push_back(Pair("sNeuralNetworkVersion",stats.sNeuralNetwork));
-        obj.push_back(Pair("nTrust",stats.nTrust));
+        obj.push_back(Pair("nTrust", stats.nTrust));
         obj.push_back(Pair("banscore", stats.nMisbehavior));
         bool bNeural = false;
-        bNeural = Contains(stats.strSubVer,"1999");
+        bNeural = Contains(stats.strSubVer, "1999");
         obj.push_back(Pair("Neural Network", bNeural));
-        obj.push_back(Pair("Neural Hash",stats.NeuralHash));
+        if (bNeural)
+        {
+            obj.push_back(Pair("Neural Hash", stats.NeuralHash));
+            obj.push_back(Pair("Neural Participant", IsNeuralNodeParticipant(stats.sGRCAddress, GetAdjustedTime())));
+
+        }
         ret.push_back(obj);
     }
 
@@ -388,7 +392,7 @@ Value sendalert(const Array& params, bool fHelp)
     // Relay alert
     {
         LOCK(cs_vNodes);
-        BOOST_FOREACH(CNode* pnode, vNodes)
+        for (auto const& pnode : vNodes)
             alert.RelayTo(pnode);
     }
 
@@ -401,5 +405,66 @@ Value sendalert(const Array& params, bool fHelp)
     result.push_back(Pair("nID", alert.nID));
     if (alert.nCancel > 0)
         result.push_back(Pair("nCancel", alert.nCancel));
+    return result;
+}
+
+Value sendalert2(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() != 7)
+        throw runtime_error(
+            //          0            1    2            3            4        5          6
+            "sendalert <privatekey> <id> <subverlist> <cancellist> <expire> <priority> <message>\n"
+            "<message> is the alert text message\n"
+            "<privatekey> is hex string of alert master private key\n"
+            "<subverlist> comma separated list of versions warning applies to\n"
+            "<priority> integer, >1000->visible\n"
+            "<id> is the unique alert number\n"
+            "<cancellist> comma separated ids of alerts to cancel\n"
+            "<expire> alert expiration in days\n"
+            "Returns true or false.");
+
+    CAlert alert;
+    CKey key;
+
+    alert.strStatusBar = params[6].get_str();
+    alert.nMinVer = PROTOCOL_VERSION;
+    alert.nMaxVer = PROTOCOL_VERSION;
+    alert.nPriority = params[5].get_int();
+    alert.nID = params[1].get_int();
+    alert.nVersion = PROTOCOL_VERSION;
+    alert.nRelayUntil = alert.nExpiration = GetAdjustedTime() + 24*60*60*params[4].get_int();
+
+    std::vector<std::string> split_subver = split(params[2].get_str(), ",");
+    alert.setSubVer.insert(split_subver.begin(),split_subver.end());
+
+    std::vector<std::string> split_cancel = split(params[3].get_str(), ",");
+    for(std::string &s : split_cancel)
+    {
+        int aver = RoundFromString(s, 0);
+        alert.setCancel.insert(aver);
+    }
+
+    CDataStream sMsg(SER_NETWORK, PROTOCOL_VERSION);
+    sMsg << (CUnsignedAlert)alert;
+    alert.vchMsg = vector<unsigned char>(sMsg.begin(), sMsg.end());
+
+    vector<unsigned char> vchPrivKey = ParseHex(params[0].get_str());
+    key.SetPrivKey(CPrivKey(vchPrivKey.begin(), vchPrivKey.end())); // if key is not correct openssl may crash
+    if (!key.Sign(Hash(alert.vchMsg.begin(), alert.vchMsg.end()), alert.vchSig))
+        throw runtime_error(
+            "Unable to sign alert, check private key?\n");  
+    if(!alert.ProcessAlert()) 
+        throw runtime_error(
+            "Failed to process alert.\n");
+    // Relay alert
+    {
+        LOCK(cs_vNodes);
+        for (auto const& pnode : vNodes)
+            alert.RelayTo(pnode);
+    }
+
+    Object result;
+    result.push_back(Pair("Content", alert.ToString()));
+    result.push_back(Pair("Success", true));
     return result;
 }

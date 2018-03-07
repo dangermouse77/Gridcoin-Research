@@ -1,7 +1,7 @@
+#include "util.h"
 #include <stdio.h>      // for input output to terminal
 #include <signal.h>
 #include "upgrader.h"
-#include "util.h"
 #include <zip.h>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <sstream>
@@ -38,7 +38,7 @@ static int cancelDownloader(void *p,
 
 std::string geturl()
 {
-    std::string url = "http://download.gridcoin.us/download/signed/";
+    std::string url = "https://download.gridcoin.us/download/downloadstake/signed/";
     // this will later be OS-dependent
     return url;
 }

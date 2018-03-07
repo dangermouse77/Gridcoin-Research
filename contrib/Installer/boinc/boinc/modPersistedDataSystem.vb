@@ -162,8 +162,12 @@ Module modPersistedDataSystem
         Return total
     End Function
     Public Function GetMagnitudeContract() As String
-        Try
 
+        Dim dLegacyMagnitudeBoost As Double = 1.35
+        Dim dtCutoverDate As DateTime = TimeZoneInfo.ConvertTimeToUtc(New DateTime(2017, 9, 7))
+        If Now > dtCutoverDate Then dLegacyMagnitudeBoost = 1.0
+
+        Try
             If GetWindowsFileAge(GetGridPath("NeuralNetwork") + "\contract.dat") < 240 Then
                 Dim sData As String
                 sData = FileToString(GetGridPath("NeuralNetwork") + "\contract.dat")
@@ -172,7 +176,7 @@ Module modPersistedDataSystem
 
             Dim lAgeOfMaster As Long = GetWindowsFileAge(GetGridPath("NeuralNetwork") + "\db.dat")
             If lAgeOfMaster > PROJECT_SYNC_THRESHOLD Then Return ""
-            
+
             Dim surrogateRow As New Row
             surrogateRow.Database = "CPID"
             surrogateRow.Table = "CPIDS"
@@ -190,7 +194,7 @@ Module modPersistedDataSystem
 
             For Each cpid As Row In lstCPIDs
                 If cpid.DataColumn5 = "True" Then
-                    Dim dLocalMagnitude As Double = Val("0" + Num(cpid.Magnitude)) * 1.35 'Ensure culture is neutral first - and then that magnitude passes through the bar
+                    Dim dLocalMagnitude As Double = Val("0" + Num(cpid.Magnitude)) * dLegacyMagnitudeBoost
                     If dLocalMagnitude > 32766 Then dLocalMagnitude = 32766
 
                     Dim sRow As String = cpid.PrimaryKey + "," + Num(dLocalMagnitude) + ";"
@@ -409,8 +413,7 @@ Module modPersistedDataSystem
 
         End Try
     End Function
-    Public Sub SyncDPOR2()
-        If Math.Abs(DateDiff(DateInterval.Second, Now, mdLastSync)) > 60 * 10 Then bMagsDoneLoading = True
+    Public Sub SyncDPOR2(sData As String)
         If bMagsDoneLoading = False Then
             Log("Blocked call.")
             Exit Sub
@@ -419,6 +422,10 @@ Module modPersistedDataSystem
             Log("Neural network is disabled.")
             Exit Sub
         End If
+
+        msSyncData = sData
+        bMagsDoneLoading = False
+
         Dim t As New Threading.Thread(AddressOf CompleteSync)
         t.Priority = Threading.ThreadPriority.BelowNormal
         t.Start()
@@ -485,19 +492,12 @@ Module modPersistedDataSystem
         End Try
     End Function
     Public Sub CompleteSync()
-        If Math.Abs(DateDiff(DateInterval.Second, Now, mdLastSync)) > 60 * 10 Then bMagsDoneLoading = True
-        If bMagsDoneLoading = False Then Exit Sub
-
-
         mbForcefullySyncAllRac = True
         Log("Starting complete Neural Network Sync.")
 
         Try
-
             EnsureNNDirExists()
-
             msCurrentNeuralHash = ""
-            bMagsDoneLoading = False
 
             Try
                 mlPercentComplete = 1
@@ -521,12 +521,12 @@ Module modPersistedDataSystem
             Log("Completesync:" + ex.Message)
         End Try
 
-        bMagsDoneLoading = True
         mdLastSync = Now
         mlPercentComplete = 0
         '7-21-2015: Store historical magnitude so it can be charted
         StoreHistoricalMagnitude()
         bNeedsDgvRefreshed = True
+        bMagsDoneLoading = True
 
     End Sub
     Private Function GetMagByCPID(sCPID As String) As Row
@@ -1064,7 +1064,9 @@ Module modPersistedDataSystem
             Dim fi As FileInfo
             Dim sPrefix = GetEntryPrefix(DataRow)
             For Each fi In fiArr
-                If Left(fi.Name, Len(sPrefix)) = sPrefix Then
+                If Left(fi.Name, Len(sPrefix)) <> sPrefix Then Continue For
+
+                Try
                     Using Stream As New System.IO.FileStream(fi.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
                         Dim objReader As New System.IO.StreamReader(Stream)
                         While objReader.EndOfStream = False
@@ -1088,7 +1090,10 @@ Module modPersistedDataSystem
                         End While
                         objReader.Close()
                     End Using
-                End If
+                Catch ex As IO.FileNotFoundException
+                    Log("GetList: Error reading " + fi.FullName)
+                End Try
+
             Next fi
         End SyncLock
         Return x

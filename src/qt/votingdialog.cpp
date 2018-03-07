@@ -32,10 +32,10 @@
 
 #include "json/json_spirit.h"
 #include "votingdialog.h"
+#include "util.h"
 
 
 extern json_spirit::Array GetJSONPollsReport(bool bDetail, std::string QueryByTitle, std::string& out_export, bool bIncludeExpired);
-extern std::vector<std::string> split(std::string s, std::string delim);
 extern std::string ExtractXML(std::string XMLdata, std::string key, std::string key_end);
 extern std::string ExecuteRPCCommand(std::string method, std::string arg1, std::string arg2);
 extern std::string ExecuteRPCCommand(std::string method, std::string arg1, std::string arg2, std::string arg3, std::string arg4, std::string arg5, std::string arg6);
@@ -57,15 +57,12 @@ static std::string GetFoundationGuid(const std::string &sTitle)
 
 static int column_alignments[] = {
     Qt::AlignRight|Qt::AlignVCenter, // RowNumber
-    Qt::AlignLeft|Qt::AlignVCenter, // Title
     Qt::AlignLeft|Qt::AlignVCenter, // Expiration
-    Qt::AlignLeft|Qt::AlignVCenter, // ShareType
-    Qt::AlignLeft|Qt::AlignVCenter, // Question
-    Qt::AlignLeft|Qt::AlignVCenter, // Answers
+    Qt::AlignLeft|Qt::AlignVCenter, // Title
+    Qt::AlignLeft|Qt::AlignVCenter, // BestAnswer
     Qt::AlignRight|Qt::AlignVCenter, // TotalParticipants
     Qt::AlignRight|Qt::AlignVCenter, // TotalShares
-    Qt::AlignLeft|Qt::AlignVCenter, // Url
-    Qt::AlignLeft|Qt::AlignVCenter, // BestAnswer
+    Qt::AlignLeft|Qt::AlignVCenter, // ShareType
     };
 
 // VotingTableModel
@@ -74,15 +71,12 @@ VotingTableModel::VotingTableModel(void)
 {
     columns_
         << tr("#")
-        << tr("Title")
         << tr("Expiration")
-        << tr("Share Type")
-        << tr("Question")
-        << tr("Answers")
+        << tr("Title")
+        << tr("Best Answer")
         << tr("# Voters")  // Total Participants
         << tr("Total Shares")
-        << tr("URL")
-        << tr("Best Answer")
+        << tr("Share Type")
         ;
 }
 
@@ -125,16 +119,10 @@ QVariant VotingTableModel::data(const QModelIndex &index, int role) const
             return item->expiration_.toString();
         case ShareType:
             return item->shareType_;
-        case Question:
-            return item->question_;
-        case Answers:
-            return item->answers_;
         case TotalParticipants:
             return item->totalParticipants_;
         case TotalShares:
             return item->totalShares_;
-        case Url:
-            return item->url_;
         case BestAnswer:
             return item->bestAnswer_;
         default:
@@ -153,16 +141,10 @@ QVariant VotingTableModel::data(const QModelIndex &index, int role) const
             return item->expiration_;
         case ShareType:
             return item->shareType_;
-        case Question:
-            return item->question_;
-        case Answers:
-            return item->answers_;
         case TotalParticipants:
             return item->totalParticipants_;
         case TotalShares:
             return item->totalShares_;
-        case Url:
-            return item->url_;
         case BestAnswer:
             return item->bestAnswer_;
         default:
@@ -182,20 +164,11 @@ QVariant VotingTableModel::data(const QModelIndex &index, int role) const
     case ShareTypeRole:
         return item->shareType_;
 
-    case QuestionRole:
-        return item->question_;
-
-    case AnswersRole:
-        return item->answers_;
-
     case TotalParticipantsRole:
         return item->totalParticipants_;
 
     case TotalSharesRole:
         return item->totalShares_;
-
-    case UrlRole:
-        return item->url_;
 
     case BestAnswerRole:
         return item->bestAnswer_;
@@ -210,19 +183,20 @@ QVariant VotingTableModel::data(const QModelIndex &index, int role) const
     return QVariant();
 }
 
-QVariant VotingTableModel::headerData(int column, Qt::Orientation orientation, int role) const
+// section corresponds to column number for horizontal headers
+QVariant VotingTableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-    if (orientation == Qt::Horizontal)
+    if (orientation == Qt::Horizontal && section >= 0)
     {
         if (role == Qt::DisplayRole)
-            return columns_[column];
+            return columns_[section];
         else
         if (role == Qt::TextAlignmentRole)
-            return column_alignments[column];
+            return column_alignments[section];
         else
         if (role == Qt::ToolTipRole)
         {
-            switch (column)
+            switch (section)
             {
             case RowNumber:
                 return tr("Row Number.");
@@ -232,16 +206,10 @@ QVariant VotingTableModel::headerData(int column, Qt::Orientation orientation, i
                 return tr("Expiration.");
             case ShareType:
                 return tr("Share Type.");
-            case Question:
-                return tr("Question.");
-            case Answers:
-                return tr("Answers");
             case TotalParticipants:
                 return tr("Total Participants.");
             case TotalShares:
                 return tr("Total Shares.");
-            case Url:
-                return tr("URL.");
             case BestAnswer:
                 return tr("Best Answer.");
             }
@@ -320,8 +288,8 @@ void VotingTableModel::resetData(bool history)
             item->question_ = QString::fromStdString(sQuestion);
             item->answers_ = QString::fromStdString(sAnswers);
             item->arrayOfAnswers_ = QString::fromStdString(sArrayOfAnswers);
-            item->totalParticipants_ = QString::fromStdString(sTotalParticipants);
-            item->totalShares_ = QString::fromStdString(sTotalShares);
+            item->totalParticipants_ = std::stoul(sTotalParticipants);
+            item->totalShares_ = std::stoul(sTotalShares);
             item->url_ = QString::fromStdString(sUrl);
             item->bestAnswer_ = QString::fromStdString(sBestAnswer);
             items.push_back(item);
@@ -348,7 +316,7 @@ VotingProxyModel::VotingProxyModel(QObject *parent)
 
 void VotingProxyModel::setFilterTQAU(const QString &str)
 {
-    filterTQAU_ = (str.size() >= 2)? str: "";
+    filterTQAU_ = str;
     invalidateFilter();
 }
 
@@ -357,11 +325,8 @@ bool VotingProxyModel::filterAcceptsRow(int row, const QModelIndex &sourceParent
     QModelIndex index = sourceModel()->index(row, 0, sourceParent);
 
     QString title = index.data(VotingTableModel::TitleRole).toString();
-    QString question = index.data(VotingTableModel::QuestionRole).toString();
-    QString answers = index.data(VotingTableModel::AnswersRole).toString();
-    QString url = index.data(VotingTableModel::UrlRole).toString();
-    if (!title.contains(filterTQAU_, Qt::CaseInsensitive) && !question.contains(filterTQAU_, Qt::CaseInsensitive) &&
-        !answers.contains(filterTQAU_, Qt::CaseInsensitive) && !url.contains(filterTQAU_, Qt::CaseInsensitive)){
+
+    if (!title.contains(filterTQAU_, Qt::CaseInsensitive)){
         return false;
     }
     return true;
@@ -370,7 +335,7 @@ bool VotingProxyModel::filterAcceptsRow(int row, const QModelIndex &sourceParent
 // VotingDialog
 //
 VotingDialog::VotingDialog(QWidget *parent)
-    : QDialog(parent),
+    : QWidget(parent),
     tableView_(0),
     tableModel_(0),
     proxyModel_(0),
@@ -381,11 +346,6 @@ VotingDialog::VotingDialog(QWidget *parent)
     tableModel_ = new VotingTableModel();
     proxyModel_ = new VotingProxyModel(this);
     proxyModel_->setSourceModel(tableModel_);
-
-    // view
-    setWindowTitle(tr("Gridcoin Voting System 1.1"));
-    setMinimumSize(400,300);
-    resize(1000,500);
 
     QVBoxLayout *vlayout = new QVBoxLayout(this);
 
@@ -398,7 +358,7 @@ VotingDialog::VotingDialog(QWidget *parent)
     QHBoxLayout *filterhlayout = new QHBoxLayout();
     groupboxvlayout->addLayout(filterhlayout);
 
-    // Filter by Title/Question/Answers/Url with one QLineEdit
+    // Filter by Title with one QLineEdit
     QLabel *filterByTQAULabel = new QLabel(tr("Filter: "));
     filterByTQAULabel->setAlignment(Qt::AlignLeft|Qt::AlignVCenter);
     filterByTQAULabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -449,12 +409,8 @@ VotingDialog::VotingDialog(QWidget *parent)
 
     tableView_->setModel(proxyModel_);
     tableView_->setFont(QFont("Arial", 8));
-#if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
     tableView_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-#else
-    tableView_->horizontalHeader()->setResizeMode(QHeaderView::Interactive);
-#endif
-    tableView_->horizontalHeader()->setMinimumWidth(VOTINGDIALOG_WIDTH_RowNumber + VOTINGDIALOG_WIDTH_Title + VOTINGDIALOG_WIDTH_Expiration + VOTINGDIALOG_WIDTH_ShareType + VOTINGDIALOG_WIDTH_Question + VOTINGDIALOG_WIDTH_Answers + VOTINGDIALOG_WIDTH_TotalParticipants + VOTINGDIALOG_WIDTH_TotalShares + VOTINGDIALOG_WIDTH_Url + VOTINGDIALOG_WIDTH_BestAnswer);
+    tableView_->horizontalHeader()->setMinimumWidth(VOTINGDIALOG_WIDTH_RowNumber + VOTINGDIALOG_WIDTH_Title + VOTINGDIALOG_WIDTH_Expiration + VOTINGDIALOG_WIDTH_ShareType + VOTINGDIALOG_WIDTH_TotalParticipants + VOTINGDIALOG_WIDTH_TotalShares + VOTINGDIALOG_WIDTH_BestAnswer);
 
     groupboxvlayout->addWidget(tableView_);
 
@@ -464,7 +420,6 @@ VotingDialog::VotingDialog(QWidget *parent)
     watcher.setProperty("running", false);
     connect(&watcher, SIGNAL(finished()), this, SLOT(onLoadingFinished()));
     loadingIndicator = new QLabel(this);
-    loadingIndicator->setText(tr("...loading data!"));
     loadingIndicator->move(50,170);
 
     chartDialog_ = new VotingChartDialog(this);
@@ -477,6 +432,7 @@ void VotingDialog::loadPolls(bool history)
     bool isRunning = watcher.property("running").toBool();
     if (tableModel_&& !isRunning)
     {
+        loadingIndicator->setText(tr("...loading data!"));
         loadingIndicator->show();
         QFuture<void> future = QtConcurrent::run(tableModel_, &VotingTableModel::resetData, history);
         watcher.setProperty("running", true);
@@ -497,7 +453,13 @@ void VotingDialog::loadHistory(void)
 void VotingDialog::onLoadingFinished(void)
 {
     watcher.setProperty("running", false);
-    loadingIndicator->hide();
+
+    int rowsCount = tableView_->verticalHeader()->count();
+    if (rowsCount > 0) {
+        loadingIndicator->hide();
+    } else {
+        loadingIndicator->setText(tr("No polls !"));
+    }
 }
 
 void VotingDialog::tableColResize(void)
@@ -511,8 +473,8 @@ void VotingDialog::tableColResize(void)
     int fixedColWidth = VOTINGDIALOG_WIDTH_RowNumber + VOTINGDIALOG_WIDTH_Expiration + VOTINGDIALOG_WIDTH_ShareType + VOTINGDIALOG_WIDTH_TotalParticipants + VOTINGDIALOG_WIDTH_TotalShares;
 
     int dynamicWidth = tableView_->horizontalHeader()->width() - fixedColWidth;
-    int nColumns = 5; // 5 dynamic columns
-    int columns[] = {VotingTableModel::Title,VotingTableModel::Question,VotingTableModel::Answers,VotingTableModel::Url,VotingTableModel::BestAnswer};
+    int nColumns = 2; // 2 dynamic columns
+    int columns[] = {VotingTableModel::Title,VotingTableModel::BestAnswer};
     int remainingWidth = dynamicWidth % nColumns;
     for(int cNum = 0; cNum < nColumns; cNum++) {
         if(remainingWidth > 0)
@@ -630,10 +592,10 @@ void VotingDialog::showVoteDialog(void)
 
     // take the row of the top selected cell
     std::sort(indexes.begin(), indexes.end());
-    int row = indexes.at(0).row();
-    const VotingItem *item = tableModel_->index(row);
+    int row = proxyModel_->mapToSource(indexes.at(0)).row();
 
     // reset the dialog's data
+    const VotingItem *item = tableModel_->index(row);
     voteDialog_->resetData(item);
 
     voteDialog_->show();
@@ -696,11 +658,7 @@ VotingChartDialog::VotingChartDialog(QWidget *parent)
     answerTable_->setRowCount(0);
     answerTableHeader<<"Answer"<<"Shares"<<"Percentage";
     answerTable_->setHorizontalHeaderLabels(answerTableHeader);
-#if QT_VERSION >= QT_VERSION_CHECK(5, 8, 0)
     answerTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-#else
-    answerTable_->horizontalHeader()->setResizeMode(QHeaderView::Stretch);
-#endif
     answerTable_->setEditTriggers( QAbstractItemView::NoEditTriggers );
     resTabWidget->addTab(answerTable_, tr("List"));
     vlayout->addWidget(resTabWidget);
@@ -1026,6 +984,10 @@ void NewPollDialog::createPoll(void)
     }
     if(sPollDays.isEmpty()){
         pollNote_->setText(tr("Creating poll failed! Days value is missing."));
+        return;
+    }
+    if(sPollDays.toInt() > 180){
+        pollNote_->setText(tr("Creating poll failed! Polls can not last longer than 180 days."));
         return;
     }
     if(sPollQuestion.isEmpty()){

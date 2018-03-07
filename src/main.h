@@ -27,25 +27,21 @@ class CNode;
 class CTxMemPool;
 
 static const int LAST_POW_BLOCK = 2050;
-extern unsigned int REORGANIZE_FAILED;
 extern unsigned int WHITELISTED_PROJECTS;
-extern unsigned int CHECKPOINT_VIOLATIONS;
-static const int MAX_NEWBIE_BLOCKS = 200;
-static const int MAX_NEWBIE_BLOCKS_LEVEL2 = 500;
-static const int CHECKPOINT_DISTRIBUTED_MODE = 50;
 static const int CONSENSUS_LOOKBACK = 5;  //Amount of blocks to go back from best block, to avoid counting forked blocks
-static const int BLOCK_GRANULARITY = 10;   //Consensus block divisor 
+static const int BLOCK_GRANULARITY = 10;  //Consensus block divisor
+static const int TALLY_GRANULARITY = BLOCK_GRANULARITY;   
 
 static const double NeuralNetworkMultiplier = 115000;
 
 extern int64_t nLastBlockSolved;
 extern int64_t nLastBlockSubmitted;
 
-extern uint256 muGlobalCheckpointHashRelayed;
 extern std::string msMasterProjectPublicKey;
 extern std::string msMasterMessagePublicKey;
 extern std::string msMasterMessagePrivateKey;
-extern bool bNewUserWizardNotified;
+
+void ClearOrphanBlocks();
 
 /** The maximum allowed size for a serialized block, in bytes (network rule) */
 static const unsigned int MAX_BLOCK_SIZE = 1000000;
@@ -70,7 +66,6 @@ static const int64_t MAX_MONEY = 2000000000 * COIN;
 inline bool MoneyRange(int64_t nValue) { return (nValue >= 0 && nValue <= MAX_MONEY); }
 /** Threshold for nLockTime: below this value it is interpreted as block number, otherwise as UNIX timestamp. */
 static const unsigned int LOCKTIME_THRESHOLD = 500000000; // Tue Nov  5 00:53:20 1985 UTC
-static const unsigned int MINIMUM_CHECKPOINT_TRANSMISSION_BALANCE = 4000000;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -90,6 +85,24 @@ inline bool IsResearchAgeEnabled(int nHeight)
 	return (fTestNet ?  nHeight > 0 : nHeight > 364500); 
 }
 
+// TODO: Move this and the other height thresholds to their own files.
+// Do not put the code in the headers!
+inline uint32_t IsV8Enabled(int nHeight)
+{
+    // Start creating V8 blocks after these heights.
+    // In testnet the first V8 block was created on block height 320000.
+    return fTestNet
+            ? nHeight > 311999
+            : nHeight > 1010000;
+}
+
+inline uint32_t IsV9Enabled(int nHeight)
+{
+    return fTestNet
+            ? nHeight >=  399000
+            : nHeight >= 1144000;
+}
+
 inline int GetSuperblockAgeSpacing(int nHeight)
 {
 	return (fTestNet ? 86400 : (nHeight > 364500) ? 86400 : 43200);
@@ -100,10 +113,18 @@ inline bool AreBinarySuperblocksEnabled(int nHeight)
 	return (fTestNet ? nHeight > 10000 : nHeight > 725000); 
 }
 
+inline bool IsV9Enabled_Tally(int nHeight)
+{
+    // 3 hours after v9
+    return IsV9Enabled(nHeight-120);
+}
 
 inline int64_t PastDrift(int64_t nTime, int nHeight)   { return IsProtocolV2(nHeight) ? nTime - 20 * 60  : nTime - 20 * 60; }
 inline int64_t FutureDrift(int64_t nTime, int nHeight) { return IsProtocolV2(nHeight) ? nTime + 20 * 60  : nTime + 20 * 60; }
 inline unsigned int GetTargetSpacing(int nHeight) { return IsProtocolV2(nHeight) ? 90 : 60; }
+
+extern bool IsNeuralNodeParticipant(const std::string& addr, int64_t locktime);
+bool VerifySuperblock(const std::string& superblock, const CBlockIndex* parent);
 
 extern std::map<std::string, std::string> mvApplicationCache;
 extern std::map<std::string, int64_t> mvApplicationCacheTimestamp;
@@ -136,10 +157,6 @@ extern uint256 nBestChainTrust;
 extern uint256 nBestInvalidTrust;
 extern uint256 hashBestChain;
 extern CBlockIndex* pindexBest;
-extern unsigned int nTransactionsUpdated;
-extern uint64_t nLastBlockTx;
-extern uint64_t nLastBlockSize;
-extern int64_t nLastCoinStakeSearchInterval;
 extern const std::string strMessageMagic;
 extern int64_t nTimeBestReceived;
 extern CCriticalSection cs_setpwalletRegistered;
@@ -153,19 +170,12 @@ extern bool bOPReturnEnabled;
 extern int64_t nTransactionFee;
 extern int64_t nReserveBalance;
 extern int64_t nMinimumInputValue;
-extern int64_t nLastTallied;
 extern int64_t nLastPing;
 extern int64_t nLastAskedForBlocks;
 extern int64_t nBootup;
-extern int64_t nLastCalculatedMedianTimePast;
-extern double nLastBlockAge;
-extern int64_t nLastCalculatedMedianPeerCount;
-extern int nLastMedianPeerCount;
-extern int64_t nLastTalliedNeural;
 extern int64_t nCPIDsLoaded;
 extern int64_t nLastGRCtallied;
 extern int64_t nLastCleaned;
-extern int64_t nLastTallyBusyWait;
 
 extern bool fUseFastIndex;
 extern unsigned int nDerivationMethodIndex;
@@ -191,14 +201,11 @@ extern std::string  msMiningErrors5;
 extern std::string  msMiningErrors6;
 extern std::string  msMiningErrors7;
 extern std::string  msMiningErrors8;
-extern std::string  msPeek;
-extern std::string  msLastCommand;
 extern std::string  msAttachmentGuid;
 
 extern std::string  msMiningErrorsIncluded;
 extern std::string  msMiningErrorsExcluded;
 
-extern std::string  msRSAOverview;
 extern std::string  msNeuralResponse;
 extern std::string  msHDDSerial;
 extern bool         mbBlocksDownloaded;
@@ -212,14 +219,13 @@ struct globalStatusType
     std::string blocks;
     std::string difficulty;
     std::string netWeight;
-    std::string dporWeight;
+    std::string coinWeight;
     std::string magnitude;
     std::string project;
     std::string cpid;
     std::string status;
     std::string poll;
     std::string errors;
-    std::string rsaOverview;
 };
 
 extern globalStatusType GlobalStatusStruct;
@@ -243,16 +249,36 @@ bool ProcessMessages(CNode* pfrom);
 bool SendMessages(CNode* pto, bool fSendTrickle);
 bool LoadExternalBlockFile(FILE* fileIn);
 bool WriteKey(std::string sKey, std::string sValue);
+double GetBlockDifficulty(unsigned int nBits);
+std::string ExtractXML(std::string XMLdata, std::string key, std::string key_end);
 
 bool CheckProofOfWork(uint256 hash, unsigned int nBits);
+// Validate researcher rewards.
+bool CheckProofOfResearch(
+    const CBlockIndex* pindexPrev, //previous block in chain index
+    const CBlock &block);    //block to check
+
 unsigned int GetNextTargetRequired(const CBlockIndex* pindexLast, bool fProofOfStake);
 int64_t GetProofOfWorkReward(int64_t nFees, int64_t locktime, int64_t height);
 
-int64_t GetProofOfStakeReward(int64_t nCoinAge, int64_t nFees, std::string cpid,
+int64_t ComputeResearchAccrual(int64_t nTime, std::string cpid, std::string operation, CBlockIndex* pindexLast, bool bVerifyingBlock, int VerificationPhase, double& dAccrualAge, double& dMagnitudeUnit, double& AvgMagnitude);
+int64_t GetProofOfStakeReward(uint64_t nCoinAge, int64_t nFees, std::string cpid,
 	bool VerifyingBlock, int VerificationPhase, int64_t nTime, CBlockIndex* pindexLast, std::string operation,
 	double& OUT_POR, double& OUT_INTEREST, double& dAccrualAge, double& dMagnitudeUnit, double& AvgMagnitude);
 
+MiningCPID DeserializeBoincBlock(std::string block, int BlockVersion);
+std::string SerializeBoincBlock(MiningCPID mcpid, int BlockVersion);
+bool OutOfSyncByAge();
+bool NeedASuperblock();
+std::string GetQuorumHash(const std::string& data);
+std::string ReadCache(std::string section, std::string key);
+std::string GetNeuralNetworkSupermajorityHash(double& out_popularity);
+std::string PackBinarySuperblock(std::string sBlock);
+std::string UnpackBinarySuperblock(std::string sBlock);
+bool IsSuperBlock(CBlockIndex* pIndex);
+bool LoadSuperblock(std::string data, int64_t nTime, int height);
 
+double GetPoSKernelPS();
 
 unsigned int ComputeMinWork(unsigned int nBase, int64_t nTime);
 unsigned int ComputeMinStake(unsigned int nBase, int64_t nTime, unsigned int nBlockTime);
@@ -268,15 +294,17 @@ void ResendWalletTransactions(bool fForce = false);
 
 std::string DefaultWalletAddress();
 
+int64_t PreviousBlockAge();
 
 /** (try to) add transaction to memory pool **/
 bool AcceptToMemoryPool(CTxMemPool& pool, CTransaction &tx,
                         bool* pfMissingInputs);
-
-std::string GetBackupFilename(const std::string& basename, const std::string& suffix = "");
-
 bool GetWalletFile(CWallet* pwallet, std::string &strWalletFileOut);
 StructCPID GetInitializedStructCPID2(const std::string& name, std::map<std::string, StructCPID>& vRef);
+bool IsResearcher(const std::string& cpid);
+extern bool ComputeNeuralNetworkSupermajorityHashes();
+
+bool SetBestChain(CTxDB& txdb, CBlock &blockNew, CBlockIndex* pindexNew);
 
 /** Position on disk for a particular transaction. */
 class CDiskTxPos
@@ -687,7 +715,7 @@ public:
     int64_t GetValueOut() const
     {
         int64_t nValueOut = 0;
-        BOOST_FOREACH(const CTxOut& txout, vout)
+        for (auto const& txout : vout)
         {
             nValueOut += txout.nValue;
             if (!MoneyRange(txout.nValue) || !MoneyRange(nValueOut))
@@ -962,7 +990,7 @@ class CBlock
 {
 public:
     // header
-    static const int CURRENT_VERSION = 7;
+    static const int CURRENT_VERSION = 9;
     int nVersion;
     uint256 hashPrevBlock;
     uint256 hashMerkleRoot;
@@ -1107,7 +1135,7 @@ public:
     int64_t GetMaxTransactionTime() const
     {
         int64_t maxTransactionTime = 0;
-        BOOST_FOREACH(const CTransaction& tx, vtx)
+        for (auto const& tx : vtx)
             maxTransactionTime = std::max(maxTransactionTime, (int64_t)tx.nTime);
         return maxTransactionTime;
     }
@@ -1115,7 +1143,7 @@ public:
     uint256 BuildMerkleTree() const
     {
         vMerkleTree.clear();
-        BOOST_FOREACH(const CTransaction& tx, vtx)
+        for (auto const& tx : vtx)
             vMerkleTree.push_back(tx.GetHash());
         int j = 0;
         for (int nSize = vtx.size(); nSize > 1; nSize = (nSize + 1) / 2)
@@ -1151,7 +1179,7 @@ public:
     {
         if (nIndex == -1)
             return 0;
-        BOOST_FOREACH(const uint256& otherside, vMerkleBranch)
+        for (auto const& otherside : vMerkleBranch)
         {
             if (nIndex & 1)
                 hash = Hash(BEGIN(otherside), END(otherside), BEGIN(hash), END(hash));
@@ -1242,7 +1270,6 @@ public:
     bool DisconnectBlock(CTxDB& txdb, CBlockIndex* pindex);
     bool ConnectBlock(CTxDB& txdb, CBlockIndex* pindex, bool fJustCheck=false, bool fReorganizing=false);
     bool ReadFromDisk(const CBlockIndex* pindex, bool fReadTransactions=true);
-    bool SetBestChain(CTxDB& txdb, CBlockIndex* pindexNew);
     bool AddToBlockIndex(unsigned int nFile, unsigned int nBlockPos, const uint256& hashProof);
     bool CheckBlock(std::string sCaller, int height1, int64_t mint, bool fCheckPOW=true, bool fCheckMerkleRoot=true, bool fCheckSig=true, bool fLoadingIndex=false) const;
     bool AcceptBlock(bool generated_by_me);
@@ -1250,7 +1277,6 @@ public:
     bool CheckBlockSignature() const;
 
 private:
-    bool SetBestChainInner(CTxDB& txdb, CBlockIndex *pindexNew, bool fReorganizing);
 };
 
 
@@ -1286,7 +1312,6 @@ public:
 	// Indicators (9-13-2015)
 	unsigned int nIsSuperBlock;
 	unsigned int nIsContract;
-	std::string sGRCAddress;
 
     unsigned int nFlags;  // ppcoin: block index flags
     enum  
@@ -1343,7 +1368,6 @@ public:
 		nMagnitude = 0;
 		nIsSuperBlock = 0;
 		nIsContract = 0;
-		sGRCAddress = "";
     }
 
     CBlockIndex(unsigned int nFileIn, unsigned int nBlockPosIn, CBlock& block)
@@ -1602,12 +1626,15 @@ public:
 		{
 			READWRITE(nIsSuperBlock);
 			READWRITE(nIsContract);
-			READWRITE(sGRCAddress);
 
-                        // Blocks used to come with a reserved string. Keep (de)serializing
-                        // it until it's used.
-                        std::string sReserved;
-                        READWRITE(sReserved);
+         std::string dummy;
+
+         // Blocks used to contain the GRC address.
+         READWRITE(dummy);
+
+         // Blocks used to come with a reserved string. Keep (de)serializing
+         // it until it's used.
+         READWRITE(dummy);
 		}
 
 
@@ -1722,7 +1749,7 @@ public:
         // Retrace how far back it was in the sender's branch
         int nDistance = 0;
         int nStep = 1;
-        BOOST_FOREACH(const uint256& hash, vHave)
+        for (auto const& hash : vHave)
         {
             std::map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(hash);
             if (mi != mapBlockIndex.end())
@@ -1741,7 +1768,7 @@ public:
     CBlockIndex* GetBlockIndex()
     {
         // Find the first block the caller has in the main chain
-        BOOST_FOREACH(const uint256& hash, vHave)
+        for (auto const& hash : vHave)
         {
             std::map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(hash);
             if (mi != mapBlockIndex.end())
@@ -1757,7 +1784,7 @@ public:
     uint256 GetBlockHash()
     {
         // Find the first block the caller has in the main chain
-        BOOST_FOREACH(const uint256& hash, vHave)
+        for (auto const& hash : vHave)
         {
             std::map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(hash);
             if (mi != mapBlockIndex.end())

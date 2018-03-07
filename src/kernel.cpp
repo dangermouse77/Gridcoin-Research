@@ -10,13 +10,10 @@
 
 bool IsCPIDValidv2(MiningCPID& mc,int height);
 using namespace std;
-MiningCPID DeserializeBoincBlock(std::string block);
 StructCPID GetStructCPID();
 extern int64_t GetRSAWeightByCPID(std::string cpid);
-extern int DetermineCPIDType(std::string cpid);
 extern int64_t GetRSAWeightByCPIDWithRA(std::string cpid);
 double MintLimiter(double PORDiff,int64_t RSA_WEIGHT,std::string cpid,int64_t locktime);
-double GetBlockDifficulty(unsigned int nBits);
 extern double GetLastPaymentTimeByCPID(std::string cpid);
 extern double GetUntrustedMagnitude(std::string cpid, double& out_owed);
 bool LessVerbose(int iMax1000);
@@ -76,11 +73,12 @@ static bool SelectBlockFromCandidates(vector<pair<int64_t, uint256> >& vSortedBy
     bool fSelected = false;
     uint256 hashBest = 0;
     *pindexSelected = (const CBlockIndex*) 0;
-    BOOST_FOREACH(const PAIRTYPE(int64_t, uint256)& item, vSortedByTimestamp)
+    for (auto const& item : vSortedByTimestamp)
     {
-        if (!mapBlockIndex.count(item.second))
+        const auto mapItem = mapBlockIndex.find(item.second);
+        if (mapItem == mapBlockIndex.end())
             return error("SelectBlockFromCandidates: failed to find block index for candidate block %s", item.second.ToString().c_str());
-        const CBlockIndex* pindex = mapBlockIndex[item.second];
+        const CBlockIndex* pindex = mapItem->second;
         if (fSelected && pindex->GetBlockTime() > nSelectionIntervalStop)
             break;
         if (mapSelectedBlocks.count(pindex->GetBlockHash()) > 0)
@@ -146,6 +144,15 @@ bool ComputeNextStakeModifier(const CBlockIndex* pindexPrev, uint64_t& nStakeMod
     if (nModifierTime / nModifierInterval >= pindexPrev->GetBlockTime() / nModifierInterval)
         return true;
 
+    const uint256 ModifGlitch_hash("439b96fd59c3d585a6b93ee63b6e1d78361d7eb9b299657dee6a2c5400ccba29");
+    const uint64_t ModifGlitch_correct=0xdf209a3032807577;
+    if(pindexPrev->GetBlockHash()==ModifGlitch_hash)
+    {
+        nStakeModifier = ModifGlitch_correct;
+        fGeneratedStakeModifier = true;
+        return true;
+    }
+
     // Sort candidate blocks by timestamp
     vector<pair<int64_t, uint256> > vSortedByTimestamp;
     vSortedByTimestamp.reserve(64 * nModifierInterval / GetTargetSpacing(pindexPrev->nHeight));
@@ -158,8 +165,7 @@ bool ComputeNextStakeModifier(const CBlockIndex* pindexPrev, uint64_t& nStakeMod
         pindex = pindex->pprev;
     }
     int nHeightFirstCandidate = pindex ? (pindex->nHeight + 1) : 0;
-    reverse(vSortedByTimestamp.begin(), vSortedByTimestamp.end());
-    sort(vSortedByTimestamp.begin(), vSortedByTimestamp.end());
+    std::sort(vSortedByTimestamp.begin(), vSortedByTimestamp.end());
 
     // Select 64 blocks from candidate blocks to generate stake modifier
     uint64_t nStakeModifierNew = 0;
@@ -194,7 +200,7 @@ bool ComputeNextStakeModifier(const CBlockIndex* pindexPrev, uint64_t& nStakeMod
                 strSelectionMap.replace(pindex->nHeight - nHeightFirstCandidate, 1, "=");
             pindex = pindex->pprev;
         }
-        BOOST_FOREACH(const PAIRTYPE(uint256, const CBlockIndex*)& item, mapSelectedBlocks)
+        for (auto const& item : mapSelectedBlocks)
         {
             // 'S' indicates selected proof-of-stake blocks
             // 'W' indicates selected proof-of-work blocks
@@ -218,9 +224,10 @@ bool ComputeNextStakeModifier(const CBlockIndex* pindexPrev, uint64_t& nStakeMod
 static bool GetKernelStakeModifier(uint256 hashBlockFrom, uint64_t& nStakeModifier, int& nStakeModifierHeight, int64_t& nStakeModifierTime, bool fPrintProofOfStake)
 {
     nStakeModifier = 0;
-    if (!mapBlockIndex.count(hashBlockFrom))
+    const auto mapItem = mapBlockIndex.find(hashBlockFrom);
+    if (mapItem == mapBlockIndex.end())
         return error("GetKernelStakeModifier() : block not indexed");
-    const CBlockIndex* pindexFrom = mapBlockIndex[hashBlockFrom];
+    const CBlockIndex* pindexFrom = mapItem->second;
     nStakeModifierHeight = pindexFrom->nHeight;
     nStakeModifierTime = pindexFrom->GetBlockTime();
     int64_t nStakeModifierSelectionInterval = GetStakeModifierSelectionInterval();
@@ -269,37 +276,13 @@ static bool GetKernelStakeModifier(uint256 hashBlockFrom, uint64_t& nStakeModifi
 //   a proof-of-work situation.
 //
 
-int DetermineCPIDType(std::string cpid)
-{
-    // -1 = Invalid CPID
-    //  1 = Valid CPID with RAC
-    //  2 = Investor or Pool Miner
-    printf("\r\nCPID Length %f\r\n",(double)cpid.length());
-
-    if (cpid.empty()) return -1;
-    if (cpid=="INVESTOR") return 2;
-    StructCPID h = mvMagnitudes[cpid];
-    if (h.Magnitude > 0) return 1;
-    // If magnitude is 0 in the current superblock, try to get magnitude from netsoft before failing
-    if (cpid.length()==32)
-    {
-        return 1;
-    }
-    else
-    {
-        // CPID is not 32 chars long- return Investor
-        return 2;
-    }
-}   
-
-
 double GetMagnitudeByHashBoinc(std::string hashBoinc, int height)
 {
     if (hashBoinc.length() > 1)
         {
-            MiningCPID boincblock = DeserializeBoincBlock(hashBoinc);
-            if (boincblock.cpid == "" || boincblock.cpid.length() < 6) return 0;  //Block has no CPID
-            if (boincblock.cpid == "INVESTOR")  return 0;
+            // block version not needed for now for mag
+            MiningCPID boincblock = DeserializeBoincBlock(hashBoinc,7);
+            if (!IsResearcher(boincblock.cpid)) return 0;
             if (boincblock.projectname == "")   return 0;
             if (boincblock.rac < 100)           return 0;
             if (!IsCPIDValidv2(boincblock,height)) return 0;
@@ -312,7 +295,7 @@ int64_t GetRSAWeightByCPIDWithRA(std::string cpid)
 {
     //Requires Magnitude > 0, be in superblock, with a lifetime cpid paid = 0
     //12-3-2015
-    if (cpid.empty() || cpid=="INVESTOR")
+    if (!IsResearcher(cpid))
         return 0;
 
     double dWeight = 0;
@@ -336,7 +319,7 @@ int64_t GetRSAWeightByCPID(std::string cpid)
 
 
     double weight = 0;
-    if (cpid=="" || cpid=="INVESTOR") return 5000;
+    if (!IsResearcher(cpid)) return 5000;
     if (mvMagnitudes.size() > 0)
     {
             StructCPID UntrustedHost = GetStructCPID();
@@ -358,7 +341,7 @@ int64_t GetRSAWeightByCPID(std::string cpid)
             }
             else
             {
-                if (cpid.length() > 5 && cpid != "INVESTOR")
+                if (IsResearcher(cpid))
                 {
                         weight = 25000;
                 }
@@ -366,7 +349,7 @@ int64_t GetRSAWeightByCPID(std::string cpid)
     }
     else
     {
-        if (cpid.length() > 5 && cpid != "INVESTOR")
+        if (IsResearcher(cpid))
         {
                 weight = 5000;
         }
@@ -394,7 +377,7 @@ double GetLastPaymentTimeByCPID(std::string cpid)
             }
             else
             {
-                if (cpid.length() > 5 && cpid != "INVESTOR")
+                if (IsResearcher(cpid))
                 {
                         lpt = 0;
                 }
@@ -402,7 +385,7 @@ double GetLastPaymentTimeByCPID(std::string cpid)
     }
     else
     {
-        if (cpid.length() > 5 && cpid != "INVESTOR")
+        if (IsResearcher(cpid))
         {
                 lpt=0;
         }
@@ -413,7 +396,7 @@ double GetLastPaymentTimeByCPID(std::string cpid)
 int64_t GetRSAWeightByBlock(MiningCPID boincblock)
 {
     int64_t rsa_weight = 0;
-    if (boincblock.cpid != "INVESTOR")
+    if (IsResearcher(boincblock.cpid))
     {
         rsa_weight = boincblock.RSAWeight + boincblock.Magnitude;
     }
@@ -439,7 +422,7 @@ double GetUntrustedMagnitude(std::string cpid, double& out_owed)
             }
             else
             {
-                if (cpid.length() > 5 && cpid != "INVESTOR")
+                if (IsResearcher(cpid))
                 {
                         out_owed = 0;
                 }
@@ -447,7 +430,7 @@ double GetUntrustedMagnitude(std::string cpid, double& out_owed)
     }
     else
     {
-        if (cpid.length() > 5 && cpid != "INVESTOR")
+        if (IsResearcher(cpid))
         {
                 out_owed = 0;
         }
@@ -483,7 +466,7 @@ static bool CheckStakeKernelHashV1(unsigned int nBits, const CBlock& blockFrom, 
     bnTargetPerCoinDay.SetCompact(nBits);
     int64_t nValueIn = txPrev.vout[prevout.n].nValue;
     uint256 hashBlockFrom = blockFrom.GetHash();
-    MiningCPID boincblock = DeserializeBoincBlock(hashBoinc);
+    MiningCPID boincblock = DeserializeBoincBlock(hashBoinc,5);
     std::string cpid = boincblock.cpid;
     int64_t RSA_WEIGHT = 0;
     int oNC = 0;
@@ -502,7 +485,7 @@ static bool CheckStakeKernelHashV1(unsigned int nBits, const CBlock& blockFrom, 
 
     double coin_age = std::abs((double)nTimeTx-(double)txPrev.nTime);
     double payment_age = std::abs((double)nTimeTx-(double)boincblock.LastPaymentTime);
-    if ((payment_age > 60*60) && boincblock.Magnitude > 1 && boincblock.cpid != "INVESTOR" && (coin_age > 4*60*60) && (coin_age > RSA_WEIGHT)
+    if ((payment_age > 60*60) && boincblock.Magnitude > 1 && IsResearcher(boincblock.cpid) && (coin_age > 4*60*60) && (coin_age > RSA_WEIGHT)
         && (RSA_WEIGHT/14 > MintLimiter(PORDiff,RSA_WEIGHT,boincblock.cpid,nTimeTx)) )
     {
         //Coins are older than RSA balance
@@ -527,7 +510,7 @@ static bool CheckStakeKernelHashV1(unsigned int nBits, const CBlock& blockFrom, 
     uint64_t nStakeModifier = 0;
     int nStakeModifierHeight = 0;
     int64_t nStakeModifierTime = 0;
-    if (boincblock.cpid=="INVESTOR")
+    if (!IsResearcher(boincblock.cpid))
     {
         if (!GetKernelStakeModifier(hashBlockFrom, nStakeModifier, nStakeModifierHeight, nStakeModifierTime, fPrintProofOfStake))
         {
@@ -634,14 +617,14 @@ static bool CheckStakeKernelHashV3(CBlockIndex* pindexPrev, unsigned int nBits,
 {
 
     double PORDiff = GetBlockDifficulty(nBits);
-    MiningCPID boincblock = DeserializeBoincBlock(hashBoinc);
+    MiningCPID boincblock = DeserializeBoincBlock(hashBoinc,7);
     double payment_age = std::abs((double)nTimeTx-(double)boincblock.LastPaymentTime);
     int64_t RSA_WEIGHT = GetRSAWeightByBlock(boincblock);
     double coin_age = std::abs((double)nTimeTx-(double)txPrev.nTime);
     double BitsAge = PORDiff * 144;     //For every 100 Diff in Bits, two hours of coin age for researchers
     if (BitsAge > 86400) BitsAge=86400; //Limit to 24 hours (possibility of astronomical diff)
 
-    if (boincblock.cpid != "INVESTOR") {
+    if (IsResearcher(boincblock.cpid)) {
         if (checking_local && RSA_WEIGHT >= 24999 && boincblock.Magnitude > .25)
             msMiningErrors7="Newbie block being generated.";
         // Halford : Explain to the Researcher why they are not staking:
@@ -746,7 +729,7 @@ bool CheckProofOfStake(CBlockIndex* pindexPrev, const CTransaction& tx, unsigned
     printf("-");
     //if (pindexPrev) nGrandfatherHeight = pindexPrev->nHeight;
 
-    if (pindexPrev->nHeight > nGrandfather)
+    if (pindexPrev->nHeight > nGrandfather || pindexPrev->nHeight >= 999000)
     {
         if (!CheckStakeKernelHash(pindexPrev, nBits, block, txindex.pos.nTxPos - txindex.pos.nBlockPos, txPrev, txin.prevout, tx.nTime, hashProofOfStake,
             targetProofOfStake, hashBoinc, fDebug, checking_local, por_nonce))
@@ -798,3 +781,157 @@ bool CheckStakeModifierCheckpoints(int nHeight, unsigned int nStakeModifierCheck
     return true;
 }
 
+
+
+// V8 Kernel Protocol
+// Tomas Brod 05.06.2017 (dd.mm.yyy)
+// Plug proof-of-work exploit.
+// TODO: Stake modifier is included without much understanding.
+// Without the modifier, attacker can create transactions which output will
+// stake at desired time. In other words attacker can check wheter transaction
+// output will stake in the future and create transactions accordingly.
+// Thus including modifier, even not completly researched, increases security.
+// Note: Rsa or Magnitude weight not included due to multiplication issue.
+// Note: Payment age and magnitude restrictions not included as they are not
+// important in my view and are too restrictive for honest users.
+// TODO: flags?
+// Note: Transaction hash is used here even thou ppcoin devs advised against it,
+// Gridcoin already used txhash in previous kernel, trying to brute-force
+// good tx hash is not possible as it is not known what stake modifier will be
+// after the coins mature!
+
+CBigNum CalculateStakeHashV8(
+    const CBlock &CoinBlock, const CTransaction &CoinTx,
+    unsigned CoinTxN, unsigned nTimeTx,
+    uint64_t StakeModifier,
+    const MiningCPID &BoincData)
+{
+    CDataStream ss(SER_GETHASH, 0);
+    ss << StakeModifier;
+    ss << (CoinBlock.nTime & ~STAKE_TIMESTAMP_MASK);
+    ss << CoinTx.GetHash();
+    ss << CoinTxN;
+    ss << (nTimeTx & ~STAKE_TIMESTAMP_MASK);
+    CBigNum hashProofOfStake( Hash(ss.begin(), ss.end()) );
+    return hashProofOfStake;
+}
+
+int64_t CalculateStakeWeightV8(
+    const CTransaction &CoinTx, unsigned CoinTxN,
+    const MiningCPID &BoincData)
+{
+    int64_t nValueIn = CoinTx.vout[CoinTxN].nValue;
+    nValueIn /= 1250000;
+    return nValueIn;
+}
+
+// Another version of GetKernelStakeModifier (TomasBrod)
+// Todo: security considerations
+bool FindStakeModifierRev(uint64_t& nStakeModifier,CBlockIndex* pindexPrev)
+{
+    nStakeModifier = 0;
+    const CBlockIndex* pindex = pindexPrev;
+
+    while (1)
+    {
+        if(!pindex)
+            return error("FindStakeModifierRev: no previous block from %d",pindexPrev->nHeight);
+
+        if (pindex->GeneratedStakeModifier())
+        {
+            nStakeModifier = pindex->nStakeModifier;
+            return true;
+        }
+        pindex = pindex->pprev;
+    }
+}
+
+// Block Version 8+ check procedure
+
+bool CheckProofOfStakeV8(
+    CBlockIndex* pindexPrev, //previous block in chain index
+    CBlock &Block, //block to check
+    bool generated_by_me,
+    uint256& hashProofOfStake) //proof hash out-parameter
+{
+    //Block Transaction 0 is coin:base
+    //Block Transaction 1 is coin:stake
+    //First input of coinstake is the kernel
+
+    CTransaction *p_coinstake;
+
+    if(Block.nVersion>=8 && Block.nVersion<=9) {
+        if (!Block.IsProofOfStake())
+            return error("CheckProofOfStakeV8() : called on non-coinstake block %s", Block.GetHash().ToString().c_str());
+        p_coinstake = &Block.vtx[1];
+    }
+    //for future coin:stake:base merging into one tx
+    else return false;
+
+    if (!p_coinstake->IsCoinStake())
+        return error("CheckProofOfStakeV8() : called on non-coinstake tx %s", Block.vtx[1].GetHash().ToString().c_str());
+
+    // Kernel (input 0) must match the stake hash target per coin age (nBits)
+    const CTransaction& tx = (*p_coinstake);
+    const CTxIn& txin = (*p_coinstake).vin[0];
+
+    // First try finding the previous transaction in database
+    CTxDB txdb("r");
+    CTransaction txPrev;
+    CTxIndex txindex;
+    if (!txPrev.ReadFromDisk(txdb, txin.prevout, txindex))
+        return tx.DoS(1, error("CheckProofOfStake() : INFO: read txPrev failed"));  // previous transaction not in main chain, may occur during initial download
+
+    // Verify signature
+    if (!VerifySignature(txPrev, tx, 0, 0))
+        return tx.DoS(100, error("CheckProofOfStake() : VerifySignature failed on coinstake %s", tx.GetHash().ToString().c_str()));
+
+    // Read block header
+    CBlock blockPrev;
+    if (!blockPrev.ReadFromDisk(txindex.pos.nFile, txindex.pos.nBlockPos, false))
+        return fDebug? error("CheckProofOfStake() : read block failed") : false; // unable to read block of previous transaction
+
+    // Check times (todo: add some more, like mask check)
+    if (tx.nTime < txPrev.nTime)  // Transaction timestamp violation
+        return error("CheckProofOfStakeV8: nTime violation");
+
+    if (blockPrev.nTime + nStakeMinAge > tx.nTime) // Min age requirement
+        return error("CheckProofOfStakeV8: min age violation");
+
+    MiningCPID boincblock = DeserializeBoincBlock(Block.vtx[0].hashBoinc,Block.nVersion);
+
+    //
+    uint64_t StakeModifier = 0;
+    if(!FindStakeModifierRev(StakeModifier,pindexPrev))
+        return error("CheckProofOfStakeV8: unable to find stake modifier");
+
+    //Stake refactoring TomasBrod
+    int64_t Weight= CalculateStakeWeightV8(txPrev,txin.prevout.n,boincblock);
+    CBigNum bnHashProof= CalculateStakeHashV8(blockPrev,txPrev,txin.prevout.n,tx.nTime,StakeModifier,boincblock);
+
+    // Base target
+    CBigNum bnTarget;
+    bnTarget.SetCompact(Block.nBits);
+    // Weighted target
+    bnTarget *= Weight;
+
+    hashProofOfStake=bnHashProof.getuint256();
+    //targetProofOfStake=bnTarget.getuint256();
+
+    if(fDebug) printf(
+"CheckProofOfStakeV8:%s Time1 %.f, Time2 %.f, Time3 %.f, Bits %u, Weight %.f\n"
+" Stk %72s\n"
+" Trg %72s\n", generated_by_me?" Local,":"",
+        (double)blockPrev.nTime, (double)txPrev.nTime, (double)tx.nTime,
+        Block.nBits, (double)Weight,
+        CBigNum(hashProofOfStake).GetHex().c_str(), bnTarget.GetHex().c_str()
+    );
+
+    // Now check if proof-of-stake hash meets target protocol
+
+    if (bnHashProof > bnTarget)
+    {
+        return false;
+    }
+    return true;
+}

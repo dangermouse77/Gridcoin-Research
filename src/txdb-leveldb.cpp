@@ -14,7 +14,6 @@
 #include <memenv/memenv.h>
 
 #include "kernel.h"
-#include "checkpoints.h"
 #include "txdb.h"
 #include "util.h"
 #include "main.h"
@@ -279,26 +278,6 @@ bool CTxDB::WriteBestInvalidTrust(CBigNum bnBestInvalidTrust)
     return Write(string("bnBestInvalidTrust"), bnBestInvalidTrust);
 }
 
-bool CTxDB::ReadSyncCheckpoint(uint256& hashCheckpoint)
-{
-    return Read(string("hashSyncCheckpoint"), hashCheckpoint);
-}
-
-bool CTxDB::WriteSyncCheckpoint(uint256 hashCheckpoint)
-{
-    return Write(string("hashSyncCheckpoint"), hashCheckpoint);
-}
-
-bool CTxDB::ReadCheckpointPubKey(string& strPubKey)
-{
-    return Read(string("strCheckpointPubKey"), strPubKey);
-}
-
-bool CTxDB::WriteCheckpointPubKey(const string& strPubKey)
-{
-    return Write(string("strCheckpointPubKey"), strPubKey);
-}
-
 bool CTxDB::ReadGenericData(std::string KeyName, std::string& strValue)
 {
     return Read(string(KeyName.c_str()), strValue);
@@ -354,9 +333,6 @@ bool CTxDB::LoadBlockIndex()
     iterator->Seek(ssStartKey.str());
 
     int nLoaded = 0;
-    #if defined(WIN32) && defined(QT_GUI)
-        SetThreadPriority(THREAD_PRIORITY_HIGHEST);
-    #endif
     
     // Now read each entry.
     printf("Loading DiskIndex %d\n",nHighest);
@@ -418,7 +394,7 @@ bool CTxDB::LoadBlockIndex()
                 nLoaded +=10000;
                 if (nLoaded > nHighest) nHighest=nLoaded;
                 if (nHighest < nGrandfather) nHighest=nGrandfather;
-                std::string sBlocksLoaded = RoundToString(nLoaded,0) + "/" + RoundToString(nHighest,0) + " Blocks Loaded";
+                std::string sBlocksLoaded = ToString(nLoaded) + "/" + ToString(nHighest) + " Blocks Loaded";
                 uiInterface.InitMessage(_(sBlocksLoaded.c_str()));
                 fprintf(stdout,"%d ",nLoaded); fflush(stdout);
             }
@@ -443,13 +419,13 @@ bool CTxDB::LoadBlockIndex()
     // Calculate nChainTrust
     vector<pair<int, CBlockIndex*> > vSortedByHeight;
     vSortedByHeight.reserve(mapBlockIndex.size());
-    BOOST_FOREACH(const PAIRTYPE(uint256, CBlockIndex*)& item, mapBlockIndex)
+    for (auto const& item : mapBlockIndex)
     {
         CBlockIndex* pindex = item.second;
         vSortedByHeight.push_back(make_pair(pindex->nHeight, pindex));
     }
     sort(vSortedByHeight.begin(), vSortedByHeight.end());
-    BOOST_FOREACH(const PAIRTYPE(int, CBlockIndex*)& item, vSortedByHeight)
+    for (auto const& item : vSortedByHeight)
     {
         CBlockIndex* pindex = item.second;
         pindex->nChainTrust = (pindex->pprev ? pindex->pprev->nChainTrust : 0) + pindex->GetBlockTrust();
@@ -480,11 +456,6 @@ bool CTxDB::LoadBlockIndex()
     printf("LoadBlockIndex(): hashBestChain=%s  height=%d  trust=%s  date=%s\n",
       hashBestChain.ToString().substr(0,20).c_str(), nBestHeight, CBigNum(nBestChainTrust).ToString().c_str(),
       DateTimeStrFormat("%x %H:%M:%S", pindexBest->GetBlockTime()).c_str());
-
-    // NovaCoin: load hashSyncCheckpoint
-    if (!ReadSyncCheckpoint(Checkpoints::hashSyncCheckpoint))
-        return error("CTxDB::LoadBlockIndex() : hashSyncCheckpoint not loaded");
-    printf("LoadBlockIndex(): synchronized checkpoint %s\n", Checkpoints::hashSyncCheckpoint.ToString().c_str());
 
     // Load bnBestInvalidTrust, OK if it doesn't exist
     CBigNum bnBestInvalidTrust;
@@ -519,7 +490,7 @@ bool CTxDB::LoadBlockIndex()
                 nLoaded +=1000;
                 if (nLoaded > nHighest) nHighest=nLoaded;
                 if (nHighest < nGrandfather) nHighest=nGrandfather;
-                std::string sBlocksLoaded = RoundToString(nLoaded,0) + "/" + RoundToString(nHighest,0) + " Blocks Verified";
+                std::string sBlocksLoaded = ToString(nLoaded) + "/" + ToString(nHighest) + " Blocks Verified";
                 uiInterface.InitMessage(_(sBlocksLoaded.c_str()));
             }
         #endif
@@ -535,7 +506,7 @@ bool CTxDB::LoadBlockIndex()
         {
             pair<unsigned int, unsigned int> pos = make_pair(pindex->nFile, pindex->nBlockPos);
             mapBlockPos[pos] = pindex;
-            BOOST_FOREACH(const CTransaction &tx, block.vtx)
+            for (auto const& tx : block.vtx)
             {
                 uint256 hashTx = tx.GetHash();
                 CTxIndex txindex;
@@ -562,7 +533,7 @@ bool CTxDB::LoadBlockIndex()
                     unsigned int nOutput = 0;
                     if (nCheckLevel>3)
                     {
-                        BOOST_FOREACH(const CDiskTxPos &txpos, txindex.vSpent)
+                        for (auto const& txpos : txindex.vSpent)
                         {
                             if (!txpos.IsNull())
                             {
@@ -589,7 +560,7 @@ bool CTxDB::LoadBlockIndex()
                                     else
                                     {
                                         bool fFound = false;
-                                        BOOST_FOREACH(const CTxIn &txin, txSpend.vin)
+                                        for (auto const& txin : txSpend.vin)
                                             if (txin.prevout.hash == hashTx && txin.prevout.n == nOutput)
                                                 fFound = true;
                                         if (!fFound)
@@ -607,7 +578,7 @@ bool CTxDB::LoadBlockIndex()
                 // check level 5: check whether all prevouts are marked spent
                 if (nCheckLevel>4)
                 {
-                     BOOST_FOREACH(const CTxIn &txin, tx.vin)
+                     for (auto const& txin : tx.vin)
                      {
                           CTxIndex txindex;
                           if (ReadTxIndex(txin.prevout.hash, txindex))
@@ -634,7 +605,7 @@ bool CTxDB::LoadBlockIndex()
         if (!block.ReadFromDisk(pindexFork))
             return error("LoadBlockIndex() : block.ReadFromDisk failed");
         CTxDB txdb;
-        block.SetBestChain(txdb, pindexFork);
+        SetBestChain(txdb, block, pindexFork);
     }
 
     printf("Set up RA ");  
@@ -660,7 +631,7 @@ bool CTxDB::LoadBlockIndex()
                 nLoaded +=10000;
                 if (nLoaded > nHighest) nHighest=nLoaded;
                 if (nHighest < nGrandfather) nHighest=nGrandfather;
-                std::string sBlocksLoaded = RoundToString(nLoaded,0) + "/" + RoundToString(nHighest,0) + " POR Blocks Verified";
+                std::string sBlocksLoaded = ToString(nLoaded) + "/" + ToString(nHighest) + " POR Blocks Verified";
                 uiInterface.InitMessage(_(sBlocksLoaded.c_str()));
             }
 #endif
@@ -696,9 +667,6 @@ bool CTxDB::LoadBlockIndex()
     }
 
     printf("RA Complete - RA Time %15" PRId64 "ms\n", GetTimeMillis() - nStart);
-    #if defined(WIN32) && defined(QT_GUI)
-        SetThreadPriority(THREAD_PRIORITY_NORMAL);
-    #endif
 
     return true;
 }

@@ -7,26 +7,33 @@
 #define BITCOIN_UTIL_H
 
 #include "uint256.h"
+#include "fwd.h"
 
 #ifndef WIN32
 #include <sys/types.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#else
+#include <windows.h> // For LARGE_INTEGER
 #endif
 
 #include <map>
 #include <vector>
 #include <string>
+#include <ostream>
+#include <locale>
 
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/date_time/gregorian/gregorian_types.hpp>
 #include <boost/date_time/posix_time/posix_time_types.hpp>
+#include <boost/thread.hpp>
 
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
 
-#include "netbase.h" // for AddTimeData
+#include "fwd.h"
+#include "serialize.h"
 
 // to obtain PRId64 on some old systems
 #define __STDC_FORMAT_MACROS 1
@@ -83,14 +90,13 @@ void MilliSleep(int64_t n);
 #define ATTR_WARN_PRINTF(X,Y)
 #endif
 
+extern int GetDayOfYear(int64_t timestamp);
 extern std::map<std::string, std::string> mapArgs;
 extern std::map<std::string, std::vector<std::string> > mapMultiArgs;
 extern bool fDebug;
 extern bool fDebugNet;
 extern bool fDebug2;
 extern bool fDebug3;
-extern bool fDebug4;
-extern bool fDebug5;
 extern bool fDebug10;
 
 extern bool fPrintToConsole;
@@ -105,6 +111,7 @@ extern bool fTestNet;
 extern bool fNoListen;
 extern bool fLogTimestamps;
 extern bool fReopenDebugLog;
+extern bool fDevbuildCripple;
 
 void RandAddSeed();
 void RandAddSeedPerfmon();
@@ -186,23 +193,60 @@ int64_t GetTime();
 void SetMockTime(int64_t nMockTimeIn);
 int64_t GetAdjustedTime();
 int64_t GetTimeOffset();
-bool IsLockTimeWithin14days(int64_t locktime);
-bool IsLockTimeWithinMinutes(int64_t locktime, int minutes);
+bool IsLockTimeWithin14days(int64_t locktime, int64_t reference);
+bool IsLockTimeWithinMinutes(int64_t locktime, int64_t reference, int minutes);
 std::string FormatFullVersion();
 std::string FormatSubVersion(const std::string& name, int nClientVersion, const std::vector<std::string>& comments);
 void AddTimeData(const CNetAddr& ip, int64_t nTime);
 void runCommand(std::string strCommand);
-std::string RoundToString(double d, int place);
-bool Contains(const std::string& data, const std::string& instring);
 
+//!
+//! \brief Round double value to N decimal places.
+//! \param d Value to round.
+//! \param place Number of decimal places.
+//!
+double Round(double d, int place);
+
+//!
+//! \brief Round a double value and convert it to a string.
+//! \param d Value to round.
+//! \param place Number of decimal places.
+//! \note This always produces an output with dot as decimal separator.
+//!
+std::string RoundToString(double d, int place);
+
+//!
+//! \brief Round a double value contained in a string.
+//!
+//! Does \c atof on \p s and rounds the result.
+//!
+//! \returns \p s represented as a double rounded to \p place decimals.
+//!
+double RoundFromString(const std::string& s, int place);
+
+//!
+//! \brief Convert any value to a string.
+//! \param val Value to convert.
+//! \note This ignores locale settings.
+//!
+template<typename T>
+std::string ToString(const T& val)
+{
+    std::ostringstream ss;
+    ss.imbue(std::locale::classic());
+    ss << std::fixed << val;
+    return ss.str();
+}
+
+bool Contains(const std::string& data, const std::string& instring);
+std::vector<std::string> split(const std::string& s, const std::string& delim);
+
+std::string MakeSafeMessage(const std::string& messagestring);
+
+// TODO: Replace this with ToString
 inline std::string i64tostr(int64_t n)
 {
     return strprintf("%" PRId64, n);
-}
-
-inline std::string itostr(int n)
-{
-    return strprintf("%d", n);
 }
 
 inline int64_t atoi64(const char* psz)
@@ -588,44 +632,23 @@ public:
 };
 
 bool NewThread(void(*pfn)(void*), void* parg);
-
-#ifdef WIN32
-inline void SetThreadPriority(int nPriority)
-{
-    SetThreadPriority(GetCurrentThread(), nPriority);
-}
-#else
-
-#define THREAD_PRIORITY_LOWEST          PRIO_MAX
-#define THREAD_PRIORITY_BELOW_NORMAL    2
-#define THREAD_PRIORITY_NORMAL          0
-#define THREAD_PRIORITY_ABOVE_NORMAL    -2
-#define THREAD_PRIORITY_HIGHEST        PRIO_MIN
-
-inline void SetThreadPriority(int nPriority)
-{
-    // It's unclear if it's even possible to change thread priorities on Linux,
-    // but we really and truly need it for the generation threads.
-#ifdef PRIO_THREAD
-    setpriority(PRIO_THREAD, 0, nPriority);
-#else
-    setpriority(PRIO_PROCESS, 0, nPriority);
-#endif
-}
-
-inline void ExitThread(size_t nExitCode)
-{
-    pthread_exit((void*)nExitCode);
-}
-#endif
-
 void RenameThread(const char* name);
 
-inline uint32_t ByteReverse(uint32_t value)
+class ThreadHandler
 {
-    value = ((value & 0xFF00FF00) >> 8) | ((value & 0x00FF00FF) << 8);
-    return (value<<16) | (value>>16);
-}
+public:
+    ThreadHandler(){};
+    bool createThread(void(*pfn)(ThreadHandlerPtr), ThreadHandlerPtr parg, const std::string tname);
+    bool createThread(void(*pfn)(void*), void* parg, const std::string tname);
+    int numThreads();
+    bool threadExists(const std::string tname);
+    void interruptAll();
+    void removeAll();
+    void removeByName(const std::string tname);
+private:
+    boost::thread_group threadGroup;
+    std::map<std::string,boost::thread*> threadMap;
+};
 
 #endif
 

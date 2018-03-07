@@ -12,6 +12,8 @@
 #include <ActiveQt/qaxobject.h>
 #endif
 
+// exit code used to trigger a restart of the wallet
+#define EXIT_CODE_REBOOT 42
 
 class TransactionTableModel;
 class ClientModel;
@@ -20,10 +22,12 @@ class TransactionView;
 class OverviewPage;
 class AddressBookPage;
 class SendCoinsDialog;
+class VotingDialog;
 class SignVerifyMessageDialog;
 class Notificator;
 class RPCConsole;
 class UpgradeDialog;
+class DiagnosticsDialog;
 
 QT_BEGIN_NAMESPACE
 class QLabel;
@@ -43,10 +47,6 @@ class BitcoinGUI : public QMainWindow
 {
     Q_OBJECT
 public:
-	QString toqstring(int o);
-
-
-
     explicit BitcoinGUI(QWidget *parent = 0);
 
     ~BitcoinGUI();
@@ -79,6 +79,7 @@ private:
     AddressBookPage *addressBookPage;
     AddressBookPage *receiveCoinsPage;
     SendCoinsDialog *sendCoinsPage;
+    VotingDialog *votingPage;
     SignVerifyMessageDialog *signVerifyMessageDialog;
 
     QLabel *labelEncryptionIcon;
@@ -104,6 +105,7 @@ private:
 	QAction *rebuildAction;
 	QAction *upgradeAction;
 	QAction *downloadAction;
+    QAction *rebootAction;
 
 	QAction *configAction;
 	QAction *leaderboardAction;
@@ -135,6 +137,7 @@ private:
     TransactionView *transactionView;
     RPCConsole *rpcConsole;
 	UpgradeDialog *upgrader;
+    DiagnosticsDialog *diagnosticsDialog;
 
     QMovie *syncIconMovie;
 
@@ -222,6 +225,8 @@ private slots:
     void diagnosticsClicked();
 	
 	void newUserWizardClicked();
+
+    void rebootClicked();
 
 
 #ifndef Q_OS_MAC
